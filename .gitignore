@@ -1,0 +1,16 @@
+# Google Auth tokens
+token.json
+
+# API Keys and Secrets (If you move them to an .env file later)
+.env
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+.venv/
+
+# Chrome Extension temporary files
+.DS_Store   

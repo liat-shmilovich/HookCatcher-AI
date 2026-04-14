@@ -1,81 +1,92 @@
-import os
-import re
-import requests
-import google.generativeai as genai
-from flask import Flask, jsonify, request
+import os, json, re, requests
+from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
+import google.generativeai as genai
+
+load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# מפתחות API
 VT_API_KEY = os.getenv("VT_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# הגדרת Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
 
-def check_url_vt(url):
-    """בודק קישור ב-VirusTotal ומחזיר סיכום"""
+def check_domain_vt(email_content):
     try:
-        # ב-API v3 של VT, צריך לשלוח את ה-URL בפורמט מיוחד או פשוט להשתמש ב-search
-        headers = {"x-apikey": VT_API_KEY}
-        # קידוד ה-URL לבדיקה
-        import base64
-        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
-        response = requests.get(f"https://www.virustotal.com/api/v3/urls/{url_id}", headers=headers)
+        # Regex משופר שמוצא לינקים גם אם הם בפורמט מוזר
+        urls = re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', email_content)
         
-        if response.status_code == 200:
-            stats = response.json()['data']['attributes']['last_analysis_stats']
-            return f"VirusTotal stats for {url}: Malicious: {stats['malicious']}, Suspicious: {stats['suspicious']}, Harmless: {stats['harmless']}"
-    except Exception as e:
-        return f"Could not scan URL {url} on VirusTotal."
-    return None
+        if not urls: 
+            return "No links found."
+        
+        # לוקחים את הלינק הראשון ומחלצים דומיין
+        full_url = urls[0]
+        domain_match = re.search(r'https?://([^/\s]+)', full_url)
+        if not domain_match: return "Invalid domain."
+        
+        domain = domain_match.group(1)
+        
+        resp = requests.get(f"https://www.virustotal.com/api/v3/domains/{domain}", headers={"x-apikey": VT_API_KEY})
+        if resp.status_code == 200:
+            stats = resp.json()['data']['attributes']['last_analysis_stats']
+            m = stats['malicious']
+            return f"VirusTotal found {m} malicious flags for domain: {domain}"
+        return f"VT Check: N/A (Status {resp.status_code})"
+    except Exception as e: 
+        return f"VT Check Failed: {str(e)}"
 
 @app.route('/analyze', methods=['POST'])
-def analyze_content():
+def analyze():
+    data = request.json
+    content = data.get('content', '')
+    subject = data.get('subject', '')
+    
+    vt_info = check_domain_vt(content)
+    
+    # הוספנו הנחיה למודל לא להיות "פרנואיד" אם אין לינקים
+    prompt = f"""
+    Analyze this email for phishing as a Security Expert.
+    Subject: {subject}
+    Content: {content}
+    VT Data: {vt_info}
+    
+    IMPORTANT: If VT Data says 'No links found', do not assume it's suspicious just because of that. 
+    Some legitimate newsletters may have links filtered out during extraction. 
+    Focus on the content, sender details, and tone.
+    
+    Return ONLY a JSON object:
+    {{"verdict": "Safe/Suspicious/Malicious", "analysis": "bullet points"}}
+    """
+    
     try:
-        data = request.get_json(force=True, silent=True) or {}
-        email_content = data.get('full_content', '')
-        subject = data.get('subject', 'No Subject')
+        safety = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
 
-        if not email_content:
-            return jsonify({"error": "No content received from the extension"}), 400
-
-        # 1. חילוץ קישורים מהטקסט שהגיע מהמסך
-        urls = re.findall(r'(https?://[^\s]+)', email_content)
-        vt_results = []
-        if urls:
-            # נסרוק רק את הקישור הראשון כדי לא לחרוג ממכסות מהר מדי
-            vt_info = check_url_vt(urls[0])
-            if vt_info:
-                vt_results.append(vt_info)
-
-        # 2. בניית ה-Prompt לאנליסט
-        vt_report = "\n".join(vt_results) if vt_results else "No URLs found or scanned."
+        response = model.generate_content(prompt, safety_settings=safety)
         
-        prompt = f"""
-        Act as a professional SOC Analyst. Analyze the following email content displayed on the user's screen:
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        result = json.loads(match.group()) if match else json.loads(response.text)
+        return jsonify(result)
         
-        Subject: {subject}
-        Content: 
-        {email_content}
-        
-        Security Tools Report (VirusTotal):
-        {vt_report}
-        
-        Provide a detailed verdict in Hebrew:
-        - Risk Level (Safe/Suspicious/Malicious)
-        - Detailed explanation based on content and VT results
-        - Recommendations for the user
-        """
-        
-        response = model.generate_content(prompt)
-        return jsonify({"result": response.text})
-
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"error": str(e)}), 500
+        print(f"DEBUG ERROR: {e}")
+        no_links_note = ""
+        if "No links found" in vt_info:
+            no_links_note = "\n• Note: No links were found in this email to scan via VirusTotal."
+
+        return jsonify({
+            "verdict": "Suspicious",
+            "analysis": f"• AI Analysis: Unavailable (Model limit reached or blocked).{no_links_note}\n" +
+                        f"• VirusTotal Status: {vt_info}\n" +
+                        f"• Action Required: Please review the email manually."
+        })
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)

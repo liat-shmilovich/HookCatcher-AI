@@ -70,6 +70,7 @@ def analyze():
         ]
 
         response = model.generate_content(prompt, safety_settings=safety)
+        print(f"AI Response: {response.text}") # השורה הזו תדפיס לנו את התשובה בטרמינל
         
         match = re.search(r'\{.*\}', response.text, re.DOTALL)
         result = json.loads(match.group()) if match else json.loads(response.text)

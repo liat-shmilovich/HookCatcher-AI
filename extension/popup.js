@@ -19,7 +19,7 @@ document.getElementById('scan-btn').addEventListener('click', async () => {
             })
         });
 
-        const response = await fetch('http://localhost:5000/analyze', {
+        const response = await fetch('https://hookcatcher-api-34669240908.us-central1.run.app/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: inject[0].result.body })

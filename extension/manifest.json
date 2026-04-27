@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "HookCatcher AI",
+  "version": "1.0",
+  "permissions": ["scripting", "activeTab"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://hookcatcher-api-34669240908.us-central1.run.app/*"
+  ],
+  "icons": {
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icon128.png"
+    }
+  }
+}

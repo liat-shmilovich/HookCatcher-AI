@@ -13,3 +13,6 @@
 
 ## How it Works
 The extension captures the email content, sends it to a secure Python backend, which then queries security databases and AI models to provide a final safety score.
+
+## Status
+Extension is currently under review in the Chrome Web Store. Backend is deployed on Google Cloud Run.
